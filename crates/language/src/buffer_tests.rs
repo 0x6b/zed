@@ -4235,7 +4235,6 @@ fn test_random_chunk_bitmaps(cx: &mut App, mut rng: StdRng) {
         }
     }
 }
-
 #[gpui::test]
 fn test_formatted_chunks(cx: &mut gpui::App) {
     init_settings(cx, |_| {});
@@ -4254,17 +4253,16 @@ fn test_formatted_chunks(cx: &mut gpui::App) {
         let chunk_text = chunk.text;
         let chars_bitmap = chunk.chars;
 
-        // Verify chars bitmap
         let char_indices = chunk_text
             .char_indices()
-            .map(|(i, _)| i)
+            .map(|(index, _)| index)
             .collect::<Vec<_>>();
 
         assert_eq!(char_indices.len() as u32, chars_bitmap.count_ones());
 
-        for byte_idx in 0..chunk_text.len() {
-            let should_have_bit = char_indices.contains(&byte_idx);
-            let has_bit = chars_bitmap & (1 << byte_idx) != 0;
+        for byte_index in 0..chunk_text.len() {
+            let should_have_bit = char_indices.contains(&byte_index);
+            let has_bit = chars_bitmap & (1 << byte_index) != 0;
 
             if has_bit != should_have_bit {
                 eprintln!("Chunk text bytes: {:?}", chunk_text.as_bytes());
@@ -4275,8 +4273,69 @@ fn test_formatted_chunks(cx: &mut gpui::App) {
             assert_eq!(
                 has_bit, should_have_bit,
                 "Chars bitmap mismatch at byte index {} in chunk {:?}. Expected bit: {}, Got bit: {}",
-                byte_idx, chunk_text, should_have_bit, has_bit
+                byte_index, chunk_text, should_have_bit, has_bit
             );
         }
     }
+}
+
+#[test]
+fn test_kind_japanese_extension_marks() {
+    // `ー` (U+30FC) and `〜` (U+301C) have Script::Common in the Unicode tables
+    // but only appear inside Japanese words in practice. Treating them as
+    // Katakana / Hiragana keeps word motion from splitting words like "コーヒー"
+    // or "だよ〜".
+    let classifier = CharClassifier::new(None);
+    assert_eq!(
+        classifier.kind('ー'),
+        CharKind::Script(unicode_script::Script::Katakana),
+    );
+    assert_eq!(
+        classifier.kind('〜'),
+        CharKind::Script(unicode_script::Script::Hiragana),
+    );
+}
+
+#[test]
+fn test_char_kind_is_word_like() {
+    let classifier = CharClassifier::new(None);
+    // ASCII word characters
+    assert!(classifier.kind('a').is_word_like());
+    assert!(classifier.kind('_').is_word_like());
+    // Japanese scripts
+    assert!(classifier.kind('あ').is_word_like());
+    assert!(classifier.kind('ア').is_word_like());
+    assert!(classifier.kind('日').is_word_like());
+    assert!(classifier.kind('ー').is_word_like());
+    assert!(classifier.kind('〜').is_word_like());
+    // Non-word
+    assert!(!classifier.kind(' ').is_word_like());
+    assert!(!classifier.kind('.').is_word_like());
+    assert!(!classifier.kind('。').is_word_like());
+}
+
+#[gpui::test]
+fn test_surrounding_word_japanese(cx: &mut App) {
+    zlog::init_test();
+    let buffer = cx.new(|cx| Buffer::local("hello 日本語 です。コーヒー だよ〜", cx));
+    let snapshot = buffer.read(cx).snapshot();
+
+    // Cursor inside `日本語` should select the whole Han run.
+    let offset = snapshot.text().find("日本語").unwrap() + "日".len();
+    let (range, kind) = snapshot.surrounding_word(offset, None);
+    assert_eq!(snapshot.text_for_range(range).collect::<String>(), "日本語");
+    assert!(kind.unwrap().is_word_like());
+
+    // Cursor inside `コーヒー` should keep the prolonged sound mark with the word.
+    let offset = snapshot.text().find("コーヒー").unwrap() + "コ".len();
+    let (range, _) = snapshot.surrounding_word(offset, None);
+    assert_eq!(
+        snapshot.text_for_range(range).collect::<String>(),
+        "コーヒー"
+    );
+
+    // Cursor inside `だよ〜` should keep the wave dash with the Hiragana run.
+    let offset = snapshot.text().find("だよ〜").unwrap() + "だ".len();
+    let (range, _) = snapshot.surrounding_word(offset, None);
+    assert_eq!(snapshot.text_for_range(range).collect::<String>(), "だよ〜");
 }

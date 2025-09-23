@@ -1873,14 +1873,8 @@ fn previous_word_end(
             &mut |left, right| {
                 let left_kind = classifier.kind(left);
                 let right_kind = classifier.kind(right);
-                match (left_kind, right_kind) {
-                    (CharKind::Punctuation, CharKind::Whitespace)
-                    | (CharKind::Punctuation, CharKind::Word)
-                    | (CharKind::Word, CharKind::Whitespace)
-                    | (CharKind::Word, CharKind::Punctuation) => true,
-                    (CharKind::Whitespace, CharKind::Whitespace) => left == '\n' && right == '\n',
-                    _ => false,
-                }
+                (left_kind != right_kind && left_kind != CharKind::Whitespace)
+                    || (left == '\n' && right == '\n')
             },
         );
         if new_point == point {
@@ -2021,11 +2015,10 @@ fn previous_subword_end(
                 }
 
                 match (left_kind, right_kind) {
-                    (CharKind::Word, CharKind::Whitespace)
-                    | (CharKind::Word, CharKind::Punctuation) => true,
-                    (CharKind::Punctuation, _) if is_stopping_punct(left) => true,
                     (CharKind::Whitespace, CharKind::Whitespace) => left == '\n' && right == '\n',
-                    _ => false,
+                    (CharKind::Whitespace, _) => false,
+                    (CharKind::Punctuation, _) => is_stopping_punct(left),
+                    _ => left_kind != right_kind,
                 }
             },
         );

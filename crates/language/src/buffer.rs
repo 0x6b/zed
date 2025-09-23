@@ -65,6 +65,7 @@ pub use text::{
     ToPointUtf16, Transaction, TransactionId, Unclipped,
 };
 use theme::{ActiveTheme as _, SyntaxTheme};
+use unicode_script::{Script, UnicodeScript};
 #[cfg(any(test, feature = "test-support"))]
 use util::RandomCharIter;
 use util::{RangeExt, debug_panic, maybe, paths::PathStyle, rel_path::RelPath};
@@ -578,7 +579,7 @@ pub(crate) struct DiagnosticEndpoint {
 }
 
 /// A class of characters, used for characterizing a run of text.
-#[derive(Copy, Clone, Eq, PartialEq, PartialOrd, Ord, Debug)]
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum CharKind {
     /// Whitespace.
     Whitespace,
@@ -586,6 +587,44 @@ pub enum CharKind {
     Punctuation,
     /// Word.
     Word,
+    /// A character from a non-Latin writing system (Han, Hiragana, Katakana,
+    /// Hangul, Bopomofo). Two characters with the same `Script` are part of
+    /// the same word; characters with different scripts form a word boundary.
+    Script(Script),
+}
+
+// `unicode_script::Script` doesn't impl `Ord`, so we can't `derive(Ord)` here.
+// Order matches the original variant-declaration order (Whitespace < Punctuation
+// < Word < Script), which `surrounding_word` relies on via `cmp::max` to pick
+// the "most word-like" kind around a cursor.
+impl PartialOrd for CharKind {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for CharKind {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        fn rank(kind: &CharKind) -> (u32, u32) {
+            match kind {
+                CharKind::Whitespace => (0, 0),
+                CharKind::Punctuation => (1, 0),
+                CharKind::Word => (2, 0),
+                CharKind::Script(script) => (3, *script as u32),
+            }
+        }
+        rank(self).cmp(&rank(other))
+    }
+}
+
+impl CharKind {
+    /// True for any kind that should be treated as part of a "word" by
+    /// completion, whole-word search, word-selection, and similar features.
+    /// Includes both Latin word characters and characters from non-Latin
+    /// scripts (Han, Hiragana, Katakana, Hangul, Bopomofo).
+    pub fn is_word_like(&self) -> bool {
+        matches!(self, CharKind::Word | CharKind::Script(_))
+    }
 }
 
 /// Context for character classification within a specific scope.
@@ -6087,7 +6126,7 @@ impl CharClassifier {
     }
 
     pub fn is_word(&self, c: char) -> bool {
-        self.kind(c) == CharKind::Word
+        self.kind(c).is_word_like()
     }
 
     pub fn is_punctuation(&self, c: char) -> bool {
@@ -6095,6 +6134,34 @@ impl CharClassifier {
     }
 
     pub fn kind_with(&self, c: char, ignore_punctuation: bool) -> CharKind {
+        // Script classification only applies to non-Latin characters, all of
+        // which are non-ASCII. Skipping the `c.script()` table lookup for ASCII
+        // keeps the common (Latin source code) path cheap.
+        if !c.is_ascii() {
+            // The wave dash and the prolonged sound mark are Script::Common in
+            // the Unicode tables, but in practice they only appear inside
+            // Japanese words. Treat them as Hiragana / Katakana respectively so
+            // that word motion does not split words like "コーヒー" or "だよ〜".
+            if c == '〜' {
+                return CharKind::Script(Script::Hiragana);
+            }
+            if c == 'ー' {
+                return CharKind::Script(Script::Katakana);
+            }
+
+            let script = c.script();
+            if matches!(
+                script,
+                Script::Hiragana
+                    | Script::Katakana
+                    | Script::Han
+                    | Script::Hangul
+                    | Script::Bopomofo
+            ) {
+                return CharKind::Script(script);
+            }
+        }
+
         if c.is_alphanumeric() || c == '_' {
             return CharKind::Word;
         }

@@ -4007,7 +4007,9 @@ impl MultiBufferSnapshot {
             .reversed_chars_at(position)
             .next()
             .map(|c| classifier.kind(c));
-        prev_char_kind.zip(next_char_kind) == Some((CharKind::Word, CharKind::Word))
+        prev_char_kind
+            .zip(next_char_kind)
+            .is_some_and(|(prev, next)| prev.is_word_like() && next.is_word_like() && prev == next)
     }
 
     pub fn surrounding_word<T: ToOffset>(

@@ -1619,8 +1619,9 @@ impl Editor {
                     false
                 } else if position_matches {
                     if self.snippet_stack.is_empty() {
-                        buffer.char_kind_before(start_offset, Some(CharScopeContext::Completion))
-                            == Some(CharKind::Word)
+                        buffer
+                            .char_kind_before(start_offset, Some(CharScopeContext::Completion))
+                            .is_some_and(|kind| kind.is_word_like())
                     } else {
                         // Snippet choices can be shown even when the cursor is in whitespace.
                         // Dismissing the menu with actions like backspace is handled by

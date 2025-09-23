@@ -14,6 +14,13 @@ use workspace::searchable::Direction;
 
 use std::{ops::Range, sync::Arc};
 
+/// True when `left` and `right` belong to different character classes (e.g.
+/// Word vs Punctuation, Hiragana vs Katakana). Callers add their own
+/// whitespace and newline handling on top.
+fn is_word_boundary(classifier: &CharClassifier, left: char, right: char) -> bool {
+    classifier.kind(left) != classifier.kind(right)
+}
+
 /// Defines search strategy for items in `movement` module.
 /// `FindRange::SingeLine` only looks for a match on a single line at a time, whereas
 /// `FindRange::MultiLine` keeps going until the end of a string.
@@ -280,7 +287,7 @@ pub fn previous_word_start(map: &DisplaySnapshot, point: DisplayPoint) -> Displa
         }
         is_first_iteration = false;
 
-        (classifier.kind(left) != classifier.kind(right) && !classifier.is_whitespace(right))
+        (is_word_boundary(&classifier, left, right) && !classifier.is_whitespace(right))
             || left == '\n'
     })
 }
@@ -292,7 +299,7 @@ pub fn previous_word_start_or_newline(map: &DisplaySnapshot, point: DisplayPoint
     let classifier = map.buffer_snapshot().char_classifier_at(raw_point);
 
     find_preceding_boundary_display_point(map, point, FindRange::MultiLine, &mut |left, right| {
-        (classifier.kind(left) != classifier.kind(right) && !classifier.is_whitespace(right))
+        (is_word_boundary(&classifier, left, right) && !classifier.is_whitespace(right))
             || left == '\n'
             || right == '\n'
     })
@@ -428,7 +435,7 @@ pub fn previous_subword_start_or_newline(
 }
 
 pub fn is_subword_start(left: char, right: char, classifier: &CharClassifier) -> bool {
-    let is_word_start = classifier.kind(left) != classifier.kind(right) && !right.is_whitespace();
+    let is_word_start = is_word_boundary(classifier, left, right) && !right.is_whitespace();
     let is_subword_start = classifier.is_word('-') && left == '-' && right != '-'
         || left == '_' && right != '_'
         || left != '_' && right == '_'
@@ -454,7 +461,7 @@ pub fn next_word_end(map: &DisplaySnapshot, point: DisplayPoint) -> DisplayPoint
         }
         is_first_iteration = false;
 
-        (classifier.kind(left) != classifier.kind(right) && !classifier.is_whitespace(left))
+        (is_word_boundary(&classifier, left, right) && !classifier.is_whitespace(left))
             || right == '\n'
     })
 }
@@ -470,7 +477,7 @@ pub fn next_word_end_or_newline(map: &DisplaySnapshot, point: DisplayPoint) -> D
         if left == '\n' {
             on_starting_row = false;
         }
-        (classifier.kind(left) != classifier.kind(right)
+        (is_word_boundary(&classifier, left, right)
             && ((on_starting_row && !left.is_whitespace())
                 || (!on_starting_row && !right.is_whitespace())))
             || right == '\n'
@@ -501,7 +508,7 @@ pub fn next_subword_end_or_newline(map: &DisplaySnapshot, point: DisplayPoint) -
         if left == '\n' {
             on_starting_row = false;
         }
-        ((classifier.kind(left) != classifier.kind(right)
+        ((is_word_boundary(&classifier, left, right)
             || is_subword_boundary_end(left, right, &classifier))
             && ((on_starting_row && !left.is_whitespace())
                 || (!on_starting_row && !right.is_whitespace())))
@@ -510,8 +517,7 @@ pub fn next_subword_end_or_newline(map: &DisplaySnapshot, point: DisplayPoint) -
 }
 
 pub fn is_subword_end(left: char, right: char, classifier: &CharClassifier) -> bool {
-    let is_word_end =
-        (classifier.kind(left) != classifier.kind(right)) && !classifier.is_whitespace(left);
+    let is_word_end = is_word_boundary(classifier, left, right) && !classifier.is_whitespace(left);
     is_word_end || is_subword_boundary_end(left, right, classifier)
 }
 
@@ -1408,6 +1414,49 @@ mod tests {
                 ),
             );
         });
+    }
+
+    #[gpui::test]
+    fn test_unicode_script_word_boundaries(cx: &mut gpui::App) {
+        init_test(cx);
+
+        fn assert_previous_word_start(marked_text: &str, cx: &mut gpui::App) {
+            let (snapshot, display_points) = marked_display_snapshot(marked_text, cx);
+            let actual = previous_word_start(&snapshot, display_points[1]);
+            let expected = display_points[0];
+            assert_eq!(actual, expected, "previous_word_start mismatch for {marked_text:?}");
+        }
+
+        fn assert_next_word_end(marked_text: &str, cx: &mut gpui::App) {
+            let (snapshot, display_points) = marked_display_snapshot(marked_text, cx);
+            let actual = next_word_end(&snapshot, display_points[0]);
+            let expected = display_points[1];
+            assert_eq!(actual, expected, "next_word_end mismatch for {marked_text:?}");
+        }
+
+        // Test Japanese script boundaries (Hiragana ↔ Katakana ↔ Han)
+        assert_previous_word_start("ひらがなˇカタカナˇ", cx);
+        assert_next_word_end("ひらがなˇカタカナˇ", cx);
+        assert_previous_word_start("ひらがなˇ漢字ˇ", cx);
+        assert_next_word_end("ひらがなˇ漢字ˇ", cx);
+        assert_previous_word_start("カタカナˇ漢字ˇ", cx);
+        assert_next_word_end("カタカナˇ漢字ˇ", cx);
+
+        // Test Latin ↔ Japanese boundaries
+        assert_previous_word_start("ˇEnglishˇ日本語", cx);
+        assert_next_word_end("Englishˇ日本語ˇ", cx);
+
+        // Test Korean script boundaries (Hangul ↔ others)
+        assert_previous_word_start("ˇHelloˇ안녕하세요", cx);
+        assert_next_word_end("Helloˇ안녕하세요ˇ", cx);
+
+        // Test Arabic script boundaries
+        assert_previous_word_start("ˇHelloˇمرحبا", cx);
+        assert_next_word_end("Helloˇمرحباˇ", cx);
+
+        // Test complex multilingual text
+        assert_previous_word_start("私はˇプログラマーˇです。", cx);
+        assert_next_word_end("私はˇプログラマーˇです。", cx);
     }
 
     #[gpui::test]

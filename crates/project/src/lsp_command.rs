@@ -16,7 +16,7 @@ use collections::HashMap;
 use futures::future;
 use gpui::{App, AsyncApp, Entity, SharedString, Task, TaskExt, prelude::FluentBuilder};
 use language::{
-    Anchor, Bias, Buffer, BufferSnapshot, CachedLspAdapter, CharKind, CharScopeContext,
+    Anchor, Bias, Buffer, BufferSnapshot, CachedLspAdapter, CharScopeContext,
     OffsetRangeExt, PointUtf16, ToOffset, ToPointUtf16, Transaction, Unclipped,
     language_settings::{InlayHintKind, LanguageSettings},
     point_from_lsp, point_to_lsp,
@@ -2407,7 +2407,7 @@ impl LspCommand for GetCompletions {
                                         offset,
                                         Some(CharScopeContext::Completion),
                                     );
-                                    let range = if kind == Some(CharKind::Word) {
+                                    let range = if kind.is_some_and(|k| k.is_word_like()) {
                                         range
                                     } else {
                                         offset..offset

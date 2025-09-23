@@ -175,7 +175,7 @@ use inlays::{InlaySplice, inlay_hints::InlayHintRefreshReason};
 use itertools::{Either, Itertools};
 use language::{
     AutoindentMode, BlockCommentConfig, BracketMatch, BracketPair, Buffer, BufferRow,
-    BufferSnapshot, Capability, CharClassifier, CharKind, CharScopeContext, CodeLabel, CursorShape,
+    BufferSnapshot, Capability, CharClassifier, CharScopeContext, CodeLabel, CursorShape,
     DiagnosticEntryRef, DiffOptions, EditPredictionsMode, EditPreview, HighlightedText, IndentKind,
     IndentSize, Language, LanguageAwareStyling, LanguageName, LanguageRegistry, LanguageScope,
     LocalFile, OffsetRangeExt, OutlineItem, Point, Selection, SelectionGoal, TextObject,
@@ -11312,7 +11312,7 @@ impl SemanticsProvider for WeakEntity<Project> {
                         buffer.read_with(cx, |buffer, _| {
                             let snapshot = buffer.snapshot();
                             let (range, kind) = snapshot.surrounding_word(position, None);
-                            if kind != Some(CharKind::Word) {
+                            if !kind.is_some_and(|k| k.is_word_like()) {
                                 return None;
                             }
                             Some(
